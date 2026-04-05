@@ -36,7 +36,12 @@ repositories {
         forRepository { maven(url) { name = alias } }
         filter { groups.forEach(::includeGroup) }
     }
-    mavenCentral()
+    maven("https://maven.aliyun.com/repository/central") {
+        name = "Aliyun Central"
+    }
+    maven("https://maven.aliyun.com/repository/public") {
+        name = "Aliyun Public"
+    }
     strictMaven("https://www.cursemaven.com", "CurseForge", "curse.maven")
     strictMaven("https://api.modrinth.com/maven", "Modrinth", "maven.modrinth")
     maven("https://maven.creeperhost.net")

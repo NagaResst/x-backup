@@ -87,6 +87,9 @@ class Config {
     @SerialName("backup_interval")
     var backupInterval = 10800
 
+    @SerialName("backup_io_parallelism")
+    var backupIoParallelism = 2
+
     @SerialName("backup_before_restore")
     var backupBeforeRestore = true
 

@@ -33,7 +33,7 @@ class BackupDatabaseService(
     val databaseDir: Path,
     val database: Database,
     private val blobDir: Path,
-    config: Config
+    private val config: Config
 ) : CoroutineScope, XBackupKotlinAsyncApi {
     private val log = LoggerFactory.getLogger("XBackup")!!
     @OptIn(DelicateCoroutinesApi::class)
@@ -223,19 +223,47 @@ class BackupDatabaseService(
         if (blobDir.startsWith(root.absolute().normalize())) {
             error("Blob directory cannot be inside the backup directory")
         }
+        
+        // 清理旧的临时文件,避免积累
+        val tmpDir = blobDir.resolve(".tmp")
+        if (tmpDir.exists()) {
+            try {
+                tmpDir.toFile().deleteRecursively()
+                log.debug("Cleaned up old temp files")
+            } catch (e: Exception) {
+                log.warn("Failed to clean temp directory", e)
+            }
+        }
+        
         val files = ConcurrentHashMap.newKeySet<String>()
         val timeStart = System.currentTimeMillis()
 
         val newEntries = ConcurrentHashMap.newKeySet<BackupEntry>()
-        val entries = root.normalize().toFile().walk().filter {
-            !shouldIgnore(it) && predicate(it.toPath())
+        // 限制并发度,减少磁盘 IO 压力
+        val ioDispatcher = Dispatchers.IO.limitedParallelism(config.backupIoParallelism.coerceAtLeast(1))
+        val entries = root.normalize().toFile().walk().filter { sourceFile ->
+            // 检查是否应该忽略此文件
+            if (shouldIgnore(sourceFile, root)) {
+                log.debug("Skipping file {} as it matches ignore pattern", sourceFile)
+                return@filter false
+            }
+            
+            // 检查是否是锁文件
+            if (isLockFile(sourceFile)) {
+                log.debug("Skipping lock file: {}", sourceFile)
+                return@filter false
+            }
+            
+            predicate(sourceFile.toPath())
         }.map { sourceFile ->
+            val path = root.normalize().relativize(sourceFile.toPath()).normalize()
+            files.add(path.toString())  // 现在在正确的范围内添加到files
             @Suppress("SuspendFunctionOnCoroutineScope")
-            this.async(Dispatchers.IO.limitedParallelism(Runtime.getRuntime().availableProcessors() / 2)) {
+            this.async(ioDispatcher) {
                 retry(5) {
                     try {
-                        val path = root.normalize().relativize(sourceFile.toPath()).normalize()
-                        files.add(path.toString())
+                        // 注意：这里不再检查 shouldIgnore 或 isLockFile，
+                        // 因为这些已经在 walk().filter 中处理过了
                         val existing = dbQuery {
                             BackupEntryTable.selectAll().where {
                                 var exp = BackupEntryTable.path eq path.toString() and
@@ -303,6 +331,7 @@ class BackupDatabaseService(
 
                                 val afterSize = sourceFile.length()
                                 val afterModified = sourceFile.lastModified()
+                                
                                 if (beforeSize != afterSize || beforeModified != afterModified) {
                                     tempBlob.deleteIfExists()
                                     error("File changed while creating backup, file: $path")
@@ -361,7 +390,7 @@ class BackupDatabaseService(
                     }
                 }
             }
-        }.toList().awaitAll()
+        }.toList().awaitAll().filterNotNull()
         require(files.size == entries.size)
         Path("debug-backup.json").writeText(Json.encodeToString(files.toList()))
         log.info("[X Backup] Backed up ${entries.size} files, ${newEntries.size} new, ${entries.size - newEntries.size} files reused")
@@ -391,6 +420,15 @@ class BackupDatabaseService(
             }
             backup
         }
+        
+        // 确保数据已写入数据库，强制刷新以确保后续查询能获取到最新数据
+        runBlocking {
+            dbQuery {
+                // 简单的查询以确保事务完成
+                BackupTable.select(BackupTable.id).where { BackupTable.id eq backup.id }.firstOrNull()
+            }
+        }
+        
         return BackupResult(
             true,
             "OK",
@@ -434,22 +472,49 @@ class BackupDatabaseService(
 
     override fun getBackup(id: Int): IBackup? = runBlocking { getBackupInternal(id) }
 
-    fun shouldIgnore(file: File): Boolean {
-        // todo: '**' pattern
+    fun shouldIgnore(file: File, root: Path = databaseDir): Boolean {
+        val path = file.toPath()
+        val rootRelativePath = root.relativize(path).normalize().toString().replace('\\', '/')
+        
         for (pattern in ignoredFiles) {
-            if ('*' !in pattern) {
-                if (file.name == pattern) {
-                    log.debug("Ignoring file {}, because it matches {}", file, pattern)
-                    return true
-                }
-            } else {
-                if (file.name.matches(Regex(pattern.replace("*", ".*")))) {
+            // Check exact match
+            if (rootRelativePath == pattern) {
+                log.debug("Ignoring file {}, because it matches {}", file, pattern)
+                return true
+            }
+            
+            // Check if the file is under an ignored directory
+            // e.g. if pattern is "directory/" and rootRelativePath is "directory/subdir/file.txt"
+            // Also handle patterns without trailing slash like "voxy"
+            val normalizedPattern = if (!pattern.endsWith("/")) pattern + "/" else pattern
+            if (rootRelativePath.startsWith(normalizedPattern)) {
+                log.debug("Ignoring file {}, because it's under ignored directory {}", file, pattern)
+                return true
+            }
+            
+            // Handle wildcard patterns
+            if ('*' in pattern || '?' in pattern) {
+                // Convert glob pattern to regex
+                val regexPattern = pattern
+                    .replace(".", "\\.")
+                    .replace("*", ".*")
+                    .replace("?", ".")
+                
+                if (rootRelativePath.matches(Regex(regexPattern))) {
                     log.debug("Ignoring file {}, because it matches {}", file, pattern)
                     return true
                 }
             }
         }
         return false
+    }
+    
+    private fun isLockFile(file: File): Boolean {
+        val fileName = file.name.lowercase()
+        return fileName == "lock" || 
+               fileName.endsWith(".lock") || 
+               fileName.contains("lock.") ||
+               fileName.startsWith(".") && fileName.endsWith("-lock")
     }
 
     /**
@@ -727,12 +792,14 @@ class BackupDatabaseService(
         newSuspendedTransaction(syncExecutor, database, statement = block)
 
     override fun listBackups(offset: Int, limit: Int): List<Backup> {
-        return transaction {
-            BackupTable.selectAll()
-                .orderBy(BackupTable.id to SortOrder.DESC)
-                .limit(limit)
-                .offset(offset.toLong()).toList()
-                .map { it.toBackup() }
+        return runBlocking {
+            transaction {
+                BackupTable.selectAll()
+                    .orderBy(BackupTable.id to SortOrder.DESC)
+                    .limit(limit)
+                    .offset(offset.toLong()).toList()
+                    .map { it.toBackup() }
+            }
         }
     }
 
@@ -740,8 +807,10 @@ class BackupDatabaseService(
         BackupTable.selectAll().lastOrNull()?.toBackup()
     }
 
-    override fun backupCount() = transaction {
-        BackupTable.selectAll().count().toInt()
+    override fun backupCount() = runBlocking {
+        transaction {
+            BackupTable.selectAll().count().toInt()
+        }
     }
 
     override fun close() {

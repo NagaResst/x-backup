@@ -658,6 +658,32 @@ object Commands {
                         1
                     }
                 }
+                literal("backup-io-parallelism") {
+                    argument("parallelism", IntegerArgumentType.integer(1)) {
+                        requires = checkPermission("x_backup.set_backup_io_parallelism")
+                        executes {
+                            val parallelism = it.getArgument("parallelism", Int::class.java)
+                            XBackup.config.backupIoParallelism = parallelism
+                            XBackup.saveConfig()
+                            it.source.send(
+                                Utils.translate(
+                                    "command.xb.set_backup_io_parallelism",
+                                    XBackup.config.backupIoParallelism
+                                )
+                            )
+                            1
+                        }
+                    }
+                    executes {
+                        it.source.send(
+                            Utils.translate(
+                                "command.xb.current_backup_io_parallelism",
+                                XBackup.config.backupIoParallelism
+                            )
+                        )
+                        1
+                    }
+                }
                 literal("prune") {
                     requires = checkPermission("x_backup.prune")
                     executes {

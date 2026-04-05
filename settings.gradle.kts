@@ -1,6 +1,14 @@
 pluginManagement {
     repositories {
-        mavenCentral()
+        maven("https://maven.aliyun.com/repository/central") {
+            name = "Aliyun Central"
+        }
+        maven("https://maven.aliyun.com/repository/gradle-plugin") {
+            name = "Aliyun Gradle Plugin"
+        }
+        maven("https://maven.aliyun.com/repository/public") {
+            name = "Aliyun Public"
+        }
         gradlePluginPortal()
         maven("https://maven.fabricmc.net/")
         maven("https://maven.kikugie.dev/releases/")
