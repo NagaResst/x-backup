@@ -35,13 +35,21 @@ subprojects {
 }
 
 
-/*
-// Publishes every version
-stonecutter registerChiseled tasks.register("chiseledPublishMods", stonecutter.chiseled) {
-    group = "project"
-    ofTask("publishMods")
+// Build all versions
+tasks.register("buildAllVersions") {
+    group = "build"
+    description = "Build all Minecraft versions"
+    
+    // Get all version projects from stonecutter
+    val versions = listOf(
+        "1.21.1", "1.21.3", "1.21.4", "1.21.5",
+        "1.21.6", "1.21.9", "1.21.11"
+    )
+    
+    versions.forEach { version ->
+        dependsOn(":${version}:buildAndCollect")
+    }
 }
-*/
 
 stonecutter parameters {
     swap("mod_version", "\"${node.project.property("mod.version")}\"")

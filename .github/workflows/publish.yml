@@ -1,0 +1,74 @@
+# Publish to Modrinth on release tag
+name: publish
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to publish (e.g., 0.3.17)'
+        required: false
+        default: ''
+
+jobs:
+  publish:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      
+      - uses: actions/cache@v3
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+            ~/.m2/repository
+            ./.gradle
+            ./**/.gradle
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+      
+      - name: Setup JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: 17
+          distribution: 'microsoft'
+      
+      - name: Setup JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: 21
+          distribution: 'microsoft'
+      
+      - name: Make gradle wrapper executable
+        run: chmod +x ./gradlew
+      
+      - name: Build all versions
+        run: ./gradlew buildAllVersions
+      
+      - name: Publish to Modrinth
+        env:
+          MODRINTH_TOKEN: ${{ secrets.MODRINTH_TOKEN }}
+        run: |
+          # Get version from tag or input
+          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            VERSION=${GITHUB_REF#refs/tags/v}
+          else
+            VERSION="${{ github.event.inputs.version }}"
+          fi
+          
+          if [ -z "$VERSION" ]; then
+            echo "Error: No version specified"
+            exit 1
+          fi
+          
+          echo "Publishing version: $VERSION"
+          
+          # Publish each version to Modrinth
+          for mc_version in "1.21.1" "1.21.3" "1.21.4" "1.21.5" "1.21.6" "1.21.9" "1.21.11"; do
+            echo "Publishing for Minecraft $mc_version..."
+            ./gradlew ":${mc_version}:publishMods" || echo "Failed to publish for $mc_version, continuing..."
+          done
+      
+      - name: Stop gradle daemon
+        run: ./gradlew --stop

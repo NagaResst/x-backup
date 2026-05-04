@@ -43,16 +43,19 @@ jobs:
       - name: make gradle wrapper executable
         if: ${{ runner.os != 'Windows' }}
         run: chmod +x ./gradlew
-      - name: Build
-        run: ./gradlew buildAndCollect cli:shadowJar
+      - name: Build all versions
+        run: ./gradlew buildAllVersions cli:shadowJar
       - name: Stop gradle daemon
         run: ./gradlew --stop
       - name: capture build artifacts (mods)
         if: ${{ runner.os == 'Linux' }}
         uses: actions/upload-artifact@v4
         with:
-          name: Mod Download
-          path: build/libs
+          name: Mod Downloads
+          path: |
+            versions/*/build/libs/*.jar
+            !versions/*/build/libs/*-sources.jar
+            !versions/*/build/libs/*-dev-all.jar
           if-no-files-found: error
           compression-level: 9
       - name: capture build artifacts (cli)
