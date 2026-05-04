@@ -36,12 +36,29 @@ repositories {
         forRepository { maven(url) { name = alias } }
         filter { groups.forEach(::includeGroup) }
     }
+    
+    // Official repositories first for Fabric dependencies
+    mavenCentral()
+    maven("https://maven.fabricmc.net/")
+    
+    // Chinese mirrors as fallback for common libraries
     maven("https://maven.aliyun.com/repository/central") {
         name = "Aliyun Central"
+        content {
+            includeGroupByRegex("com\\.google.*")
+            includeGroupByRegex("org\\.apache.*")
+            includeGroupByRegex("org\\.jetbrains.*")
+        }
     }
     maven("https://maven.aliyun.com/repository/public") {
         name = "Aliyun Public"
+        content {
+            includeGroupByRegex("com\\.google.*")
+            includeGroupByRegex("org\\.apache.*")
+        }
     }
+    
+    // Mod repositories
     strictMaven("https://www.cursemaven.com", "CurseForge", "curse.maven")
     strictMaven("https://api.modrinth.com/maven", "Modrinth", "maven.modrinth")
     maven("https://maven.creeperhost.net")
