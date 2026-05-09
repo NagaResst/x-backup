@@ -47,7 +47,7 @@ object Utils {
 
     fun MinecraftServer.broadcast(text: Text) {
         playerManager.playerList
-            .filter { playerManager.isOperator(it.gameProfile) }
+            .filter { it.commandSource.hasPermissionLevel(2) }
             .forEach { it.sendMessage(text) }
     }
 
