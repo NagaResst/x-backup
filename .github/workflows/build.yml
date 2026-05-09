@@ -4,11 +4,19 @@
 # against bad commits.
 
 name: build
-on: [
-  pull_request,
-  push,
-  workflow_dispatch
-]
+on:
+  pull_request:
+  push:
+  workflow_dispatch:
+    inputs:
+      release:
+        description: 'Publish a GitHub Release'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
 
 jobs:
   build:
@@ -66,3 +74,47 @@ jobs:
           path: cli/build/libs
           if-no-files-found: error
           compression-level: 9
+
+  release:
+    needs: build
+    runs-on: ubuntu-22.04
+    if: >
+      (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.release == 'true')
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download mod artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: Mod Downloads
+          path: release-mods
+
+      - name: Download CLI artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: CLI Tools
+          path: release-cli
+
+      - name: Determine release tag
+        id: tag
+        run: |
+          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            echo "tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+          else
+            echo "tag=v$(grep '^mod.version=' gradle.properties | cut -d= -f2)" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          name: ${{ steps.tag.outputs.tag }}
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+          files: |
+            release-mods/**/*.jar
+            release-cli/**/*.jar
