@@ -47,7 +47,13 @@ object Utils {
 
     fun MinecraftServer.broadcast(text: Text) {
         playerManager.playerList
-            .filter { it.hasPermissionLevel(2) }
+            .filter {
+                //? if >=1.21.11 {
+                /*playerManager.opList.get(it.gameProfile) != null
+                *///?} else {
+                it.hasPermissionLevel(2)
+                //?}
+            }
             .forEach { it.sendMessage(text) }
     }
 
