@@ -46,7 +46,7 @@ object Utils {
     }
 
     fun MinecraftServer.broadcast(text: Text) {
-        playerManager.playerList
+        playerManager.players
             .filter { playerManager.isOperator(it.gameProfile) }
             .forEach { it.sendMessage(text) }
     }
