@@ -45,8 +45,10 @@ object Utils {
         runServer()
     }
 
-    inline fun MinecraftServer.broadcast(text: Text) {
-        playerManager.broadcast(text, false)
+    fun MinecraftServer.broadcast(text: Text) {
+        playerManager.playerList
+            .filter { playerManager.isOperator(it.gameProfile) }
+            .forEach { it.sendMessage(text) }
     }
 
     fun isFileInWorld(world: ServerWorld, p: Path): Boolean {
