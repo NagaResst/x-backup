@@ -46,8 +46,8 @@ object Utils {
     }
 
     fun MinecraftServer.broadcast(text: Text) {
-        playerManager.players
-            .filter { playerManager.isOperator(it.gameProfile) }
+        playerManager.playerList
+            .filter { it.hasPermissionLevel(2) }
             .forEach { it.sendMessage(text) }
     }
 
