@@ -31,8 +31,8 @@ pluginManagement {
 }
 
 plugins {
-    id("dev.kikugie.stonecutter") version "0.7.7-beta.2"
-    id("org.gradle.toolchains.foojay-resolver-convention") version "0.8.0"
+    id("org.gradle.toolchains.foojay-resolver-convention") version "1.0.0"
+    id("dev.kikugie.stonecutter") version "0.9.7"
 }
 
 rootProject.name = "X Backup"
@@ -42,7 +42,7 @@ stonecutter {
     kotlinController = true
     centralScript = "build.gradle.kts"
 
-    shared {
+    create(rootProject) {
         versions(
             "1.21.1",
             "1.21.3",
@@ -51,9 +51,10 @@ stonecutter {
             "1.21.6",
             "1.21.9",
             "1.21.11",
+            "26.1.2",
         )
+        vcsVersion = "1.21.5"
     }
-    create(rootProject)
 }
 
 include("compat-fake-source")

@@ -1,9 +1,9 @@
 plugins {
     `maven-publish`
-    id("fabric-loom")
+    id("dev.kikugie.loom-back-compat") version "0.4.2"
     kotlin("jvm")
     kotlin("plugin.serialization")
-    id("io.github.goooler.shadow") version "8.1.7"
+    id("com.gradleup.shadow")
     id("me.modmuss50.mod-publish-plugin")
 }
 
@@ -27,8 +27,16 @@ version = "${mod.version}+$mcVersion"
 group = mod.group
 base { archivesName.set(mod.id) }
 
+val isMojmapUnobfuscated = stonecutter.eval(mcVersion, ">=26")
+
 loom {
-    accessWidenerPath = rootProject.file("src/main/resources/xb.shared.accesswidener")
+    accessWidenerPath = rootProject.file(
+        if (isMojmapUnobfuscated) {
+            "src/main/resources/xb.shared.official.accesswidener"
+        } else {
+            "src/main/resources/xb.shared.accesswidener"
+        }
+    )
 }
 
 repositories {
@@ -36,11 +44,11 @@ repositories {
         forRepository { maven(url) { name = alias } }
         filter { groups.forEach(::includeGroup) }
     }
-    
+
     // Official repositories first for Fabric dependencies
     mavenCentral()
     maven("https://maven.fabricmc.net/")
-    
+
     // Chinese mirrors as fallback for common libraries
     maven("https://maven.aliyun.com/repository/central") {
         name = "Aliyun Central"
@@ -57,7 +65,7 @@ repositories {
             includeGroupByRegex("org\\.apache.*")
         }
     }
-    
+
     // Mod repositories
     strictMaven("https://www.cursemaven.com", "CurseForge", "curse.maven")
     strictMaven("https://api.modrinth.com/maven", "Modrinth", "maven.modrinth")
@@ -72,14 +80,21 @@ dependencies {
     testImplementation("org.jetbrains.kotlin:kotlin-test-junit:1.6.10")
 
     minecraft("com.mojang:minecraft:$mcVersion")
-    mappings("net.fabricmc:yarn:$mcVersion+build.${deps["yarn_build"]}:v2")
+    // On remapped versions (<= 1.21.11) this installs official Mojang mappings.
+    // On 26.1+ Minecraft is already unobfuscated, so it intentionally does nothing.
+    loomx.applyMojangMappings()
     modImplementation("net.fabricmc:fabric-loader:${deps["fabric_loader"]}")
     modImplementation("net.fabricmc:fabric-language-kotlin:${deps["kotlin_loader_version"]}")
     fapi(
         // Add modules from https://github.com/FabricMC/fabric
         "fabric-lifecycle-events-v1",
-        "fabric-resource-loader-v0"
     )
+
+    if (stonecutter.eval(mcVersion, ">=26")) {
+        fapi("fabric-resource-loader-v1")
+    } else {
+        fapi("fabric-resource-loader-v0")
+    }
 
     if (stonecutter.eval(stonecutter.current.version, ">=1.20")) {
         fapi("fabric-command-api-v2")
@@ -116,9 +131,11 @@ loom {
     }
 }
 
-val javaVersion =
-    if (stonecutter.eval(mcVersion, ">=1.20.6")) 21
-    else 17
+val javaVersion = when {
+    stonecutter.eval(mcVersion, ">=26") -> 25
+    stonecutter.eval(mcVersion, ">=1.20.6") -> 21
+    else -> 17
+}
 
 java {
     withSourcesJar()
@@ -130,20 +147,36 @@ kotlin {
     jvmToolchain(javaVersion)
 }
 
+val javaDep = if (javaVersion >= 25) ">=25" else ">=21"
+val mixinJavaLevel = "JAVA_$javaVersion"
+
 tasks.processResources {
     inputs.property("id", mod.id)
     inputs.property("name", mod.name)
     inputs.property("version", mod.version)
     inputs.property("mcdep", mcDep)
+    inputs.property("javaDep", javaDep)
+    inputs.property("mixinJavaLevel", mixinJavaLevel)
 
     val map = mapOf(
         "id" to mod.id,
         "name" to mod.name,
         "version" to mod.version,
-        "mcdep" to mcDep
+        "mcdep" to mcDep,
+        "javaDep" to javaDep,
+        "mixinJavaLevel" to mixinJavaLevel,
     )
 
     filesMatching("fabric.mod.json") { expand(map) }
+    filesMatching("x-backup.mixins.json") { expand(map) }
+
+    if (isMojmapUnobfuscated) {
+        // Fabric Loader still looks up the shared file name in the built jar.
+        exclude("xb.shared.accesswidener")
+        from(rootProject.file("src/main/resources/xb.shared.official.accesswidener")) {
+            rename { "xb.shared.accesswidener" }
+        }
+    }
 
     dependsOn(project(":common").tasks.processResources)
     outputs.upToDateWhen { false }
@@ -158,10 +191,20 @@ tasks.processResources {
 
 tasks.register<Copy>("buildAndCollect") {
     group = "build"
-    from(tasks.remapJar.get().archiveFile)
+    from(loomx.modJar.flatMap { it.archiveFile })
     into(rootProject.layout.buildDirectory.file("libs/${mod.version}"))
     dependsOn("build")
 }
+
+tasks.matching {
+    it.name == "compileKotlin" || it.name == "compileJava"
+}.configureEach {
+    // Stonecutter preprocesses the shared sources into the versioned build
+    // directory. Keep the generation task in the graph for every compile.
+    dependsOn("stonecutterGenerate")
+}
+
+val shadowJarTask = tasks.shadowJar
 
 tasks {
     shadowJar {
@@ -201,16 +244,18 @@ tasks {
             relocate(it, relocatePath + it)
         }
     }
+}
 
-    remapJar {
-        dependsOn(shadowJar)
-        inputFile.set(shadowJar.get().archiveFile)
+// 26.1+ uses the plain jar task, older versions use remapJar.
+loomx.modJar.configure {
+    dependsOn(shadowJarTask)
+    if (this is net.fabricmc.loom.task.RemapJarTask) {
+        inputFile.set(shadowJarTask.flatMap { it.archiveFile })
     }
 }
 
-
 publishMods {
-    file = tasks.remapJar.get().archiveFile
+    file = loomx.modJar.flatMap { it.archiveFile }
     displayName = "${mod.name} ${mod.version} for $mcVersion"
     version = "${mod.version}+$mcVersion"
     changelog = rootProject.file("CHANGELOG.md").readText()
