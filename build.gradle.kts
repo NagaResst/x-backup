@@ -251,6 +251,11 @@ loomx.modJar.configure {
     dependsOn(shadowJarTask)
     if (this is net.fabricmc.loom.task.RemapJarTask) {
         inputFile.set(shadowJarTask.flatMap { it.archiveFile })
+    } else {
+        // 26.x: Minecraft is unobfuscated, so no remap is needed.
+        // Bundle the shadow (fat) jar content directly into the final jar.
+        from(zipTree(shadowJarTask.flatMap { it.archiveFile }))
+        duplicatesStrategy = DuplicatesStrategy.EXCLUDE
     }
 }
 
