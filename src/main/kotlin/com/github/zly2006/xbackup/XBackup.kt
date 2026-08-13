@@ -257,15 +257,23 @@ object XBackup : ModInitializer {
         val database = when (config.databaseType.lowercase()) {
             "mysql" -> {
                 val hikariConfig = HikariConfig().apply {
-                    jdbcUrl = "jdbc:mysql://${config.mysqlHost}:${config.mysqlPort}/${config.mysqlDatabase}"
+                    jdbcUrl = "jdbc:mysql://${config.mysqlHost}:${config.mysqlPort}/${config.mysqlDatabase}" +
+                            "?rewriteBatchedStatements=true" +
+                            "&useServerPrepStmts=false" +
+                            "&cachePrepStmts=true" +
+                            "&prepStmtCacheSize=250" +
+                            "&prepStmtCacheSqlLimit=2048" +
+                            "&useUnicode=true&characterEncoding=utf8"
                     username = config.mysqlUsername
                     password = config.mysqlPassword
                     driverClassName = "com.mysql.cj.jdbc.Driver"
                     maximumPoolSize = 10
                     minimumIdle = 2
                     idleTimeout = 600000
-                    connectionTimeout = 30000
+                    connectionTimeout = 10000
+                    validationTimeout = 5000
                     maxLifetime = 1800000
+                    connectionTestQuery = "SELECT 1"
                 }
                 Database.connect(HikariDataSource(hikariConfig))
             }

@@ -114,7 +114,7 @@ class BackupDatabaseService(
     object BackupTable : IntIdTable("backups") {
         val size = long("size")
         val zippedSize = long("zipped_size")
-        val created = long("created")
+        val created = long("created").index()
         val comment = varchar("comment", 255)
         val temporary = bool("temporary").default(false)
         val cloudBackupUrl = varchar("cloud_backup_url", 255).nullable()
@@ -411,11 +411,9 @@ class BackupDatabaseService(
                 it[this.temporary] = temporary
                 it[this.metadata] = metadata
             }.resultedValues!!.single().toBackup()
-            entries.forEach { entry ->
-                BackupEntryBackupTable.insert {
-                    it[this.backup] = backup.id
-                    it[this.entry] = entry.id
-                }
+            BackupEntryBackupTable.batchInsert(entries) { backupEntry ->
+                this[BackupEntryBackupTable.backup] = backup.id
+                this[BackupEntryBackupTable.entry] = backupEntry.id
             }
             // recheck
             val entryList = backup.entries.filter {
@@ -802,17 +800,36 @@ class BackupDatabaseService(
     override fun listBackups(offset: Int, limit: Int): List<Backup> {
         return runBlocking {
             transaction {
-                BackupTable.selectAll()
+                val backups = BackupTable.selectAll()
                     .orderBy(BackupTable.id to SortOrder.DESC)
                     .limit(limit)
-                    .offset(offset.toLong()).toList()
-                    .map { it.toBackup() }
+                    .offset(offset.toLong())
+                    .toList()
+                val ids = backups.map { it[BackupTable.id].value }
+                val entryRows = if (ids.isEmpty()) {
+                    emptyList()
+                } else {
+                    (BackupEntryBackupTable innerJoin BackupEntryTable)
+                        .selectAll()
+                        .where { BackupEntryBackupTable.backup inList ids }
+                        .toList()
+                }
+                val entriesByBackup = entryRows.groupBy(
+                    { it[BackupEntryBackupTable.backup].value },
+                    { it.toBackupEntry() }
+                )
+                backups.map { backupRow ->
+                    backupRow.toBackup(entriesByBackup[backupRow[BackupTable.id].value].orEmpty())
+                }
             }
         }
     }
 
     suspend fun getLatestBackup(): Backup? = dbQuery {
-        BackupTable.selectAll().lastOrNull()?.toBackup()
+        BackupTable.selectAll()
+            .orderBy(BackupTable.id to SortOrder.DESC)
+            .limit(1)
+            .firstOrNull()?.toBackup()
     }
 
     override fun backupCount() = runBlocking {
@@ -832,15 +849,21 @@ class BackupDatabaseService(
             val entries = BackupEntryBackupTable.select(BackupEntryBackupTable.entry).where {
                 BackupEntryBackupTable.backup eq id
             }
+            return toBackup(
+                BackupEntryTable.selectAll().where {
+                    BackupEntryTable.id inSubQuery entries
+                }.map { it.toBackupEntry() }
+            )
+        }
+
+        private fun ResultRow.toBackup(entries: List<BackupEntry>): Backup {
             return Backup(
-                id,
+                this[BackupTable.id].value,
                 this[BackupTable.size],
                 this[BackupTable.zippedSize],
                 this[BackupTable.created],
                 this[BackupTable.comment],
-                BackupEntryTable.selectAll().where {
-                    BackupEntryTable.id inSubQuery entries
-                }.map { it.toBackupEntry() },
+                entries,
                 this[BackupTable.temporary],
                 this[BackupTable.cloudBackupUrl],
                 this[BackupTable.metadata]
