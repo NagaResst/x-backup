@@ -6,7 +6,7 @@ import net.creeperhost.polylib.client.modulargui.elements.*;
 import net.creeperhost.polylib.client.modulargui.lib.Assembly;
 import net.creeperhost.polylib.client.modulargui.lib.geometry.Axis;
 import net.creeperhost.polylib.client.modulargui.lib.geometry.GuiParent;
-import net.minecraft.text.Text;
+import net.minecraft.network.chat.Component;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.function.Supplier;
@@ -23,27 +23,27 @@ public class BMStyle {
             return PolyPalette.Flat.contentArea(parent);
         }
 
-        public static GuiButton button(GuiElement<?> parent, Text label) {
+        public static GuiButton button(GuiElement<?> parent, Component label) {
             return PolyPalette.Flat.button(parent, label);
         }
 
-        public static GuiButton button(GuiElement<?> parent, @Nullable Supplier<Text> label) {
+        public static GuiButton button(GuiElement<?> parent, @Nullable Supplier<Component> label) {
             return PolyPalette.Flat.button(parent, label);
         }
 
-        public static GuiButton buttonCaution(GuiElement<?> parent, Text label) {
+        public static GuiButton buttonCaution(GuiElement<?> parent, Component label) {
             return PolyPalette.Flat.buttonCaution(parent, label);
         }
 
-        public static GuiButton buttonCaution(GuiElement<?> parent, @Nullable Supplier<Text> label) {
+        public static GuiButton buttonCaution(GuiElement<?> parent, @Nullable Supplier<Component> label) {
             return PolyPalette.Flat.buttonCaution(parent, label);
         }
 
-        public static GuiButton buttonPrimary(GuiElement<?> parent, Text label) {
+        public static GuiButton buttonPrimary(GuiElement<?> parent, Component label) {
             return PolyPalette.Flat.buttonPrimary(parent, label);
         }
 
-        public static GuiButton buttonPrimary(GuiElement<?> parent, @Nullable Supplier<Text> label) {
+        public static GuiButton buttonPrimary(GuiElement<?> parent, @Nullable Supplier<Component> label) {
             return PolyPalette.Flat.buttonPrimary(parent, label);
         }
 

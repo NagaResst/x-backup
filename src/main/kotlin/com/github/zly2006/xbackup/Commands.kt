@@ -21,17 +21,16 @@ import kotlinx.serialization.json.encodeToStream
 import kotlinx.serialization.json.put
 import me.lucko.fabric.api.permissions.v0.Permissions
 //? if >=1.21.11 {
-/*import net.minecraft.command.DefaultPermissions
+/*import net.minecraft.server.permissions.Permissions as McPermissions
 *///?}
-import net.minecraft.command.argument.ColumnPosArgumentType
-import net.minecraft.server.command.ServerCommandSource
-import net.minecraft.text.ClickEvent
-import net.minecraft.text.HoverEvent
-import net.minecraft.text.MutableText
-import net.minecraft.text.Text
-import net.minecraft.util.Formatting
-import net.minecraft.util.Util
-import net.minecraft.util.WorldSavePath
+import net.minecraft.commands.arguments.coordinates.ColumnPosArgument
+import net.minecraft.commands.CommandSourceStack
+import net.minecraft.network.chat.ClickEvent
+import net.minecraft.network.chat.HoverEvent
+import net.minecraft.network.chat.MutableComponent
+import net.minecraft.network.chat.Component
+import net.minecraft.ChatFormatting
+import net.minecraft.world.level.storage.LevelResource
 import java.net.URI
 import java.nio.file.Path
 import java.text.SimpleDateFormat
@@ -42,7 +41,7 @@ import kotlin.math.max
 import kotlin.math.min
 import kotlin.system.exitProcess
 
-fun shortDateTimeText(time: Long): MutableText {
+fun shortDateTimeText(time: Long): MutableComponent {
     val text = if (System.currentTimeMillis() - time < 24 * 3600 * 1000) {
         SimpleDateFormat("HH:mm").apply {
             timeZone = TimeZone.getDefault()
@@ -53,15 +52,15 @@ fun shortDateTimeText(time: Long): MutableText {
             timeZone = TimeZone.getDefault()
         }.format(time)
     }
-    return Text.literal(text).apply {
-        hover(Text.literal(SimpleDateFormat("yyyy-MM-dd HH:mm:ss z").apply {
+    return Component.literal(text).apply {
+        hover(Component.literal(SimpleDateFormat("yyyy-MM-dd HH:mm:ss z").apply {
             timeZone = TimeZone.getDefault()
         }.format(time)))
-        formatted(Formatting.GOLD)!!
+        withStyle(ChatFormatting.GOLD)!!
     }
 }
 
-fun backupIdText(id: Int) = Text.literal("#$id").formatted(Formatting.AQUA)!!
+fun backupIdText(id: Int) = Component.literal("#$id").withStyle(ChatFormatting.AQUA)!!
 
 fun sizeToString(bytes: Long): String {
     val kb = bytes / 1024.0
@@ -78,10 +77,10 @@ fun sizeToString(bytes: Long): String {
     }
 }
 
-fun sizeText(bytes: Long) = Text.literal(sizeToString(bytes)).formatted(Formatting.GREEN)!!
+fun sizeText(bytes: Long) = Component.literal(sizeToString(bytes)).withStyle(ChatFormatting.GREEN)!!
 
-fun MutableText.hover(literalText: MutableText) {
-    styled {
+fun MutableComponent.hover(literalText: MutableComponent) {
+    withStyle {
         it.withHoverEvent(
             //? if >=1.21.5 {
             HoverEvent.ShowText(literalText)
@@ -95,8 +94,8 @@ fun MutableText.hover(literalText: MutableText) {
     }
 }
 
-fun MutableText.clickRun(cmd: String) {
-    styled {
+fun MutableComponent.clickRun(cmd: String) {
+    withStyle {
         it.withClickEvent(
             //? if >=1.21.5 {
             ClickEvent.RunCommand(cmd)
@@ -111,12 +110,12 @@ fun MutableText.clickRun(cmd: String) {
 }
 
 object Commands {
-    fun networkStatsText(): MutableText {
+    fun networkStatsText(): MutableComponent {
         val cloudStorage = XBackup.service.cloudStorageProvider
-        return Text.empty().apply {
-            append(Text.literal("⏶" + sizeToString(cloudStorage.bytesSentLastSecond) + "/s"))
+        return Component.empty().apply {
+            append(Component.literal("⏶" + sizeToString(cloudStorage.bytesSentLastSecond) + "/s"))
             append(" ")
-            append(Text.literal("⏷" + sizeToString(cloudStorage.bytesReceivedLastSecond) + "/s"))
+            append(Component.literal("⏷" + sizeToString(cloudStorage.bytesReceivedLastSecond) + "/s"))
         }
     }
 
@@ -126,14 +125,14 @@ object Commands {
         ).create()
     }
 
-    fun register(dispatcher: CommandDispatcher<ServerCommandSource>) {
+    fun register(dispatcher: CommandDispatcher<CommandSourceStack>) {
         dispatcher.register {
             literal("xb") {
                 literal("status") {
-                    fun basicStatus(source: ServerCommandSource) {
+                    fun basicStatus(source: CommandSourceStack) {
                         source.send(Utils.translate("command.xb.status", if (XBackup.isBusy) "Busy" else "OK"))
                         if (XBackup.config.mirrorMode) {
-                            source.send(Text.literal("X Backup is in mirror mode").formatted(Formatting.GOLD))
+                            source.send(Component.literal("X Backup is in mirror mode").withStyle(ChatFormatting.GOLD))
                         }
                         source.send(
                             Utils.translate(
@@ -142,7 +141,7 @@ object Commands {
                             )
                         )
                         if (XBackup.service.activeTaskProgress != -1) {
-                            source.send(Text.literal("云备份任务：${XBackup.service.activeTask} ${XBackup.service.activeTaskProgress}%"))
+                            source.send(Component.literal("云备份任务：${XBackup.service.activeTask} ${XBackup.service.activeTaskProgress}%"))
                             source.send(networkStatsText())
                         }
                     }
@@ -214,7 +213,7 @@ object Commands {
                                 }
                                 if (XBackup.service.backupCount() > offset + 6) {
                                     it.source.send(Utils.translate("command.xb.more_backups").apply {
-                                        formatted(Formatting.GRAY)
+                                        withStyle(ChatFormatting.GRAY)
                                         hover(Utils.translate("command.xb.click_view_more"))
                                         clickRun("/xb list ${offset + 6}")
                                     })
@@ -228,7 +227,7 @@ object Commands {
                     executes {
                         it.source.send(
                             Utils.translate("command.xb.version", XBackup.MOD_VERSION + "(" + XBackup.GIT_COMMIT + ")")
-                                .styled {
+                                .withStyle {
                                     it.withClickEvent(
                                         //? if >=1.21.5 {
                                         ClickEvent.OpenUrl(URI("https://github.com/zly2006/x-backup"))
@@ -254,18 +253,18 @@ object Commands {
                                     "command.xb.backup_info",
                                     backupIdText(id), backup.comment, sizeText(backup.size),
                                     sizeText(backup.zippedSize),
-                                    Text.literal(SimpleDateFormat("yyyy-MM-dd HH:mm:ss z").apply {
+                                    Component.literal(SimpleDateFormat("yyyy-MM-dd HH:mm:ss z").apply {
                                         timeZone = TimeZone.getDefault()
                                     }.format(backup.created)).apply {
-                                        formatted(Formatting.GOLD)!!
+                                        withStyle(ChatFormatting.GOLD)!!
                                     }
                                 ).apply {
                                     append("\n")
                                     append(
                                         Utils.translate("command.xb.delete").apply {
-                                            hover(Utils.translate("command.xb.click_delete").formatted(Formatting.RED))
+                                            hover(Utils.translate("command.xb.click_delete").withStyle(ChatFormatting.RED))
                                             clickRun("/xb delete $id")
-                                            formatted(Formatting.RED)
+                                            withStyle(ChatFormatting.RED)
                                         }
                                     )
                                     append(Utils.translate("command.xb.space"))
@@ -273,7 +272,7 @@ object Commands {
                                         Utils.translate("command.xb.restore").apply {
                                             hover(Utils.translate("command.xb.click_restore"))
                                             clickRun("/xb restore $id")
-                                            formatted(Formatting.DARK_GREEN)
+                                            withStyle(ChatFormatting.DARK_GREEN)
                                         }
                                     )
                                 }
@@ -292,10 +291,10 @@ object Commands {
         }
     }
 
-    private fun registerMirrorMode(dispatcher: CommandDispatcher<ServerCommandSource>) {
+    private fun registerMirrorMode(dispatcher: CommandDispatcher<CommandSourceStack>) {
         dispatcher.register {
             literal("mirror") {
-                fun CommandContext<ServerCommandSource>.backup(): IBackup {
+                fun CommandContext<CommandSourceStack>.backup(): IBackup {
                     val id = try {
                         IntegerArgumentType.getInteger(this, "id")
                     } catch (_: IllegalArgumentException) {
@@ -308,12 +307,12 @@ object Commands {
                 optional(argument("id", IntegerArgumentType.integer(1))) {
                     requires = checkPermission("x_backup.mirror", 0)
                     executes {
-                        val path = it.source.server.getSavePath(WorldSavePath.ROOT).toAbsolutePath()
+                        val path = it.source.server.getWorldPath(LevelResource.ROOT).toAbsolutePath()
                         doRestore(it.backup(), it, path, forceStop = true)
                         1
                     }
                     literal("--restart").executes {
-                        val path = it.source.server.getSavePath(WorldSavePath.ROOT).toAbsolutePath()
+                        val path = it.source.server.getWorldPath(LevelResource.ROOT).toAbsolutePath()
                         doRestore(it.backup(), it, path, forceStop = false)
                         1
                     }
@@ -323,14 +322,14 @@ object Commands {
     }
 
     @OptIn(ExperimentalSerializationApi::class)
-    private fun registerBackupMode(dispatcher: CommandDispatcher<ServerCommandSource>) {
+    private fun registerBackupMode(dispatcher: CommandDispatcher<CommandSourceStack>) {
         dispatcher.register {
             literal("xb") {
                 literal("create") {
                     requires = checkPermission("x_backup.create", 0)
                     optional(argument("comment", StringArgumentType.greedyString())) {
                         executes {
-                            val path = it.source.server.getSavePath(WorldSavePath.ROOT).toAbsolutePath().normalize()
+                            val path = it.source.server.getWorldPath(LevelResource.ROOT).toAbsolutePath().normalize()
                             val comment = try {
                                 StringArgumentType.getString(it, "comment")
                             } catch (_: IllegalArgumentException) {
@@ -338,24 +337,24 @@ object Commands {
                             }
                             XBackup.ensureNotBusy {
                                 it.source.server.broadcast(
-                                    Utils.translate("command.xb.creating_backup", it.source.name)
+                                    Utils.translate("command.xb.creating_backup", it.source.textName)
                                 )
                                 it.source.server.save()
                                 it.source.server.setAutoSaving(false)
                                 XBackup.disableSaving = true
                                 val result = XBackup.service.createBackup(
                                     path,
-                                    "$comment by ${it.source.name}",
+                                    "$comment by ${it.source.textName}",
                                     temporary = false,
                                     buildJsonObject {
                                         put("mod_ver", XBackup.MOD_VERSION)
-                                        put("source", it.source.name)
+                                        put("source", it.source.textName)
                                     }
                                 )
                                 it.source.server.broadcast(
                                     Utils.translate(
                                         "command.xb.backup_finished",
-                                        backupIdText(result.backId), it.source.name, sizeText(result.totalSize),
+                                        backupIdText(result.backId), it.source.textName, sizeText(result.totalSize),
                                         sizeText(result.compressedSize), sizeText(result.addedSize), result.millis
                                     )
                                 )
@@ -402,14 +401,14 @@ object Commands {
                     argument("id", IntegerArgumentType.integer(1)) {
                         literal("--chunk") {
                             requires = checkPermission("x_backup.restore.regional", 4)
-                            argument("from", ColumnPosArgumentType.columnPos()) {
-                                argument("to", ColumnPosArgumentType.columnPos()).executes {
+                            argument("from", ColumnPosArgument.columnPos()) {
+                                argument("to", ColumnPosArgument.columnPos()).executes {
                                     val id = IntegerArgumentType.getInteger(it, "id")
-                                    val from = ColumnPosArgumentType.getColumnPos(it, "from")
-                                    val to = ColumnPosArgumentType.getColumnPos(it, "to")
+                                    val from = ColumnPosArgument.getColumnPos(it, "from")
+                                    val to = ColumnPosArgument.getColumnPos(it, "to")
                                     val path =
-                                        it.source.server.getSavePath(WorldSavePath.ROOT).toAbsolutePath().normalize()
-                                    val world = it.source.world
+                                        it.source.server.getWorldPath(LevelResource.ROOT).toAbsolutePath().normalize()
+                                    val world = it.source.level
                                     val backup = getBackup(id)
                                     val minX = min(from.x, to.x)
                                     val maxX = max(from.x, to.x)
@@ -452,7 +451,7 @@ object Commands {
                         }
                         literal("--restart").executes {
                             val id = IntegerArgumentType.getInteger(it, "id")
-                            val path = it.source.server.getSavePath(WorldSavePath.ROOT).toAbsolutePath()
+                            val path = it.source.server.getWorldPath(LevelResource.ROOT).toAbsolutePath()
                             val backup = getBackup(id)
                             doRestore(backup, it, path, forceStop = false)
                             1
@@ -461,7 +460,7 @@ object Commands {
                             requires = checkPermission("x_backup.restore.force", 4)
                             executes {
                                 val id = IntegerArgumentType.getInteger(it, "id")
-                                val path = it.source.server.getSavePath(WorldSavePath.ROOT).toAbsolutePath()
+                                val path = it.source.server.getWorldPath(LevelResource.ROOT).toAbsolutePath()
                                 val backup = getBackup(id)
                                 doRestore(backup, it, path, recheck = false, forceStop = true)
                                 1
@@ -469,7 +468,7 @@ object Commands {
                         }
                     }.executes {
                         val id = IntegerArgumentType.getInteger(it, "id")
-                        val path = it.source.server.getSavePath(WorldSavePath.ROOT).toAbsolutePath()
+                        val path = it.source.server.getWorldPath(LevelResource.ROOT).toAbsolutePath()
                         val backup = getBackup(id)
                         doRestore(backup, it, path, forceStop = true)
                         1
@@ -497,7 +496,7 @@ object Commands {
                                 file.outputStream().use {
                                     Json.encodeToStream(backup, it)
                                 }
-                                it.source.send(Text.literal("Saved backup details to $file"))
+                                it.source.send(Component.literal("Saved backup details to $file"))
                             }
                             1
                         }
@@ -506,7 +505,7 @@ object Commands {
                         executes {
                             XBackup.ensureNotBusy {
                                 val result = XBackup.service.deleteUnusedBlobs()
-                                it.source.send(Text.literal("Deleted $result unused blobs"))
+                                it.source.send(Component.literal("Deleted $result unused blobs"))
                             }
                             1
                         }
@@ -544,7 +543,7 @@ object Commands {
                                     downloaded++
                                     XBackup.service.activeTaskProgress = 100 * downloaded / total
                                 }
-                                it.source.send(Text.keybind("Debug: Downloaded backup $id"))
+                                it.source.send(Component.keybind("Debug: Downloaded backup $id"))
                                 1
                             }
                             1
@@ -568,25 +567,14 @@ object Commands {
                     literal("restart") {
                         executes {
                             Thread {
-                                when (Util.getOperatingSystem()) {
-                                    Util.OperatingSystem.WINDOWS -> {
-                                        it.source.server.stop(true)
-                                        ProcessBuilder(
-                                            RestartUtils.generateWindowsRestartCommand()
-                                        ).start()
+                                it.source.server.halt(true)
+                                ProcessBuilder(
+                                    if (RestartUtils.isWindows) {
+                                        RestartUtils.generateWindowsRestartCommand()
+                                    } else {
+                                        RestartUtils.generateUnixRestartCommand()
                                     }
-
-                                    Util.OperatingSystem.LINUX, Util.OperatingSystem.OSX -> {
-                                        it.source.server.stop(true)
-                                        ProcessBuilder(
-                                            RestartUtils.generateUnixRestartCommand()
-                                        ).start()
-                                    }
-
-                                    else -> {
-                                        return@Thread
-                                    }
-                                }
+                                ).start()
                                 XBackup.log.info("[X Backup] Your game will restart soon...")
                                 exitProcess(0)
                             }.start()
@@ -614,7 +602,7 @@ object Commands {
                         runBlocking {
                             XBackup.crontabJob?.cancelAndJoin()
                         }
-                        it.source.send(Text.literal("Stopped crontab job"))
+                        it.source.send(Component.literal("Stopped crontab job"))
                         1
                     }
                     literal("zip") {
@@ -699,7 +687,7 @@ object Commands {
 
     private fun doRestore(
         backup: IBackup,
-        it: CommandContext<ServerCommandSource>,
+        it: CommandContext<CommandSourceStack>,
         path: Path,
         forceStop: Boolean = false,
         recheck: Boolean = true,
@@ -708,7 +696,7 @@ object Commands {
         val service = XBackup.service
         // Note: on server thread
         if (recheck && !service.check(backup)) {
-            it.source.sendError(Utils.translate("command.xb.backup_corrupted", backupIdText(backup.id)).apply {
+            it.source.sendFailure(Utils.translate("command.xb.backup_corrupted", backupIdText(backup.id)).apply {
                 hover(Utils.translate("command.xb.backup_corrupted.force", backupIdText(backup.id)))
             })
             return
@@ -757,17 +745,17 @@ object Commands {
                     }
                 }
             }
-            it.source.server.stop(false)
-            it.source.server.networkIo?.connections?.forEach {
-                it.disconnected = true
+            it.source.server.halt(false)
+            it.source.server.connection?.connections?.forEach {
+                it.disconnectionHandled = true
                 // prevent the game from saving player data again
             }
             XBackup.log.info("[X Backup] Waiting for server to stop...")
-            it.source.server.thread.join()
+            it.source.server.runningThread.join()
         }
     }
 
-    private fun checkPermission(perm: String, defaultLevel: Int = 2): (ServerCommandSource) -> Boolean = { source ->
+    private fun checkPermission(perm: String, defaultLevel: Int = 2): (CommandSourceStack) -> Boolean = { source ->
         try {
             // Call fabric-permissions API, but it might not be available
             Permissions.check(source, perm, defaultLevel)
@@ -776,14 +764,14 @@ object Commands {
             //? if >=1.21.11 {
             /*val permission = when {
                 defaultLevel <= 0 -> null
-                defaultLevel <= 1 -> DefaultPermissions.MODERATORS
-                defaultLevel <= 2 -> DefaultPermissions.GAMEMASTERS
-                defaultLevel <= 3 -> DefaultPermissions.ADMINS
-                else -> DefaultPermissions.OWNERS
+                defaultLevel <= 1 -> McPermissions.COMMANDS_MODERATOR
+                defaultLevel <= 2 -> McPermissions.COMMANDS_GAMEMASTER
+                defaultLevel <= 3 -> McPermissions.COMMANDS_ADMIN
+                else -> McPermissions.COMMANDS_OWNER
             }
-            permission == null || source.permissions.hasPermission(permission)
+            permission == null || source.permissions().hasPermission(permission)
             *///?} else {
-            source.hasPermissionLevel(defaultLevel)
+            source.hasPermission(defaultLevel)
             //?}
         }
     }

@@ -7,6 +7,9 @@ import java.lang.management.RuntimeMXBean
 object RestartUtils {
     var runtimeMxBean: RuntimeMXBean = ManagementFactory.getRuntimeMXBean()
 
+    val isWindows: Boolean
+        get() = System.getProperty("os.name").lowercase().contains("win")
+
     fun generateUnixRestartCommand(): List<String> {
         val jre = System.getProperty("java.home") + "/bin/java"
         val cp = runtimeMxBean.classPath
