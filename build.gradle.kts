@@ -1,3 +1,14 @@
+import org.vafer.jdeb.shaded.objectweb.asm.ClassReader
+import org.vafer.jdeb.shaded.objectweb.asm.ClassWriter
+import org.vafer.jdeb.shaded.objectweb.asm.commons.ClassRemapper
+import org.vafer.jdeb.shaded.objectweb.asm.commons.Remapper
+import java.nio.file.AtomicMoveNotSupportedException
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
+import java.util.zip.ZipEntry
+import java.util.zip.ZipInputStream
+import java.util.zip.ZipOutputStream
+
 plugins {
     `maven-publish`
     id("dev.kikugie.loom-back-compat") version "0.4.2"
@@ -189,12 +200,7 @@ tasks.processResources {
     }
 }
 
-tasks.register<Copy>("buildAndCollect") {
-    group = "build"
-    from(loomx.modJar.flatMap { it.archiveFile })
-    into(rootProject.layout.buildDirectory.file("libs/${mod.version}"))
-    dependsOn("build")
-}
+// buildAndCollect is defined below, after the final mod jar task is selected.
 
 tasks.matching {
     it.name == "compileKotlin" || it.name == "compileJava"
@@ -205,6 +211,12 @@ tasks.matching {
 }
 
 val shadowJarTask = tasks.shadowJar
+val shadowRelocations = listOf(
+    "org.jetbrains.exposed",
+    "org.apache",
+    "io.ktor"
+)
+val shadowRelocationPrefix = "com.github.zly2006.xbackup.libs."
 
 tasks {
     shadowJar {
@@ -235,13 +247,8 @@ tasks {
             exclude("org/sqlite/native/$it/**")
         }
 
-        val relocatePath = "com.github.zly2006.xbackup.libs."
-        listOf(
-            "org.jetbrains.exposed",
-            "org.apache",
-            "io.ktor"
-        ).forEach {
-            relocate(it, relocatePath + it)
+        shadowRelocations.forEach {
+            relocate(it, shadowRelocationPrefix + it)
         }
     }
 }
@@ -252,15 +259,117 @@ loomx.modJar.configure {
     if (this is net.fabricmc.loom.task.RemapJarTask) {
         inputFile.set(shadowJarTask.flatMap { it.archiveFile })
     } else {
-        // 26.x: Minecraft is unobfuscated, so no remap is needed.
-        // Bundle the shadow (fat) jar content directly into the final jar.
-        from(zipTree(shadowJarTask.flatMap { it.archiveFile }))
-        duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+        // 26.x: Minecraft is unobfuscated, so no remap is needed. The plain jar
+        // task must not produce the final artifact path any more: mixing its raw
+        // (unrelocated) project classes with the relocated shadow jar content was
+        // what caused NoClassDefFoundError: org/jetbrains/exposed/sql/Database.
+        archiveClassifier.set("raw")
     }
 }
 
+// For 26.x, build the final jar from the shadow jar only. Mixing the plain jar
+// task's raw (unrelocated) project classes with the relocated shadow jar content
+// was what caused NoClassDefFoundError: org/jetbrains/exposed/sql/Database.
+// Shadow 9.6.1 can leave a few Kotlin inline-lambda classes pointing at the
+// original packages after its relocation pass. Copy the already-built shadow
+// jar unchanged, then repair only those remaining bytecode references.
+val finalModJar: TaskProvider<out org.gradle.jvm.tasks.Jar> = if (isMojmapUnobfuscated) {
+    tasks.register<org.gradle.api.tasks.bundling.Jar>("modJar26") {
+        group = "build"
+        dependsOn(shadowJarTask)
+        from(zipTree(shadowJarTask.flatMap { it.archiveFile }))
+        archiveClassifier.set("")
+        duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+
+        manifest {
+            from(loomx.modJar.get().manifest)
+            from(shadowJarTask.get().manifest)
+            attributes["Multi-Release"] = "true"
+            attributes["Fabric-Mapping-Namespace"] = "official"
+        }
+
+        doLast {
+            val jarPath = archiveFile.get().asFile.toPath()
+            val tempPath = Files.createTempFile(
+                jarPath.parent,
+                ".${jarPath.fileName}.",
+                ".relocated.tmp"
+            )
+            val relocatedPrefix = shadowRelocationPrefix.replace('.', '/')
+            val remapper = object : Remapper() {
+                override fun map(internalName: String): String {
+                    shadowRelocations.forEach { packageName ->
+                        val packagePath = packageName.replace('.', '/') + "/"
+                        if (internalName.startsWith(packagePath)) {
+                            return relocatedPrefix + internalName
+                        }
+                    }
+                    return internalName
+                }
+            }
+
+            try {
+                ZipInputStream(Files.newInputStream(jarPath)).use { input ->
+                    ZipOutputStream(Files.newOutputStream(tempPath)).use { output ->
+                        while (true) {
+                            val entry = input.nextEntry ?: break
+                            val inputBytes = input.readBytes()
+                            val outputBytes = if (!entry.isDirectory && entry.name.endsWith(".class")) {
+                                val reader = ClassReader(inputBytes)
+                                val writer = ClassWriter(0)
+                                reader.accept(ClassRemapper(writer, remapper), ClassReader.EXPAND_FRAMES)
+                                writer.toByteArray()
+                            } else {
+                                inputBytes
+                            }
+
+                            val outputEntry = ZipEntry(entry.name)
+                            if (entry.time >= 0) outputEntry.time = entry.time
+                            entry.comment?.let { outputEntry.comment = it }
+                            entry.extra?.let { outputEntry.extra = it }
+                            output.putNextEntry(outputEntry)
+                            if (!entry.isDirectory) output.write(outputBytes)
+                            output.closeEntry()
+                            input.closeEntry()
+                        }
+                    }
+                }
+
+                try {
+                    Files.move(
+                        tempPath,
+                        jarPath,
+                        StandardCopyOption.ATOMIC_MOVE,
+                        StandardCopyOption.REPLACE_EXISTING
+                    )
+                } catch (_: AtomicMoveNotSupportedException) {
+                    Files.move(tempPath, jarPath, StandardCopyOption.REPLACE_EXISTING)
+                }
+            } finally {
+                Files.deleteIfExists(tempPath)
+            }
+        }
+    }
+} else {
+    loomx.modJar
+}
+
+if (isMojmapUnobfuscated) {
+    tasks.named("assemble") {
+        dependsOn(finalModJar)
+    }
+}
+
+tasks.register<Copy>("buildAndCollect") {
+    group = "build"
+    from(finalModJar.flatMap { it.archiveFile })
+    into(rootProject.layout.buildDirectory.file("libs/${mod.version}"))
+    dependsOn(finalModJar)
+    dependsOn("build")
+}
+
 publishMods {
-    file = loomx.modJar.flatMap { it.archiveFile }
+    file = finalModJar.flatMap { it.archiveFile }
     displayName = "${mod.name} ${mod.version} for $mcVersion"
     version = "${mod.version}+$mcVersion"
     changelog = rootProject.file("CHANGELOG.md").readText()

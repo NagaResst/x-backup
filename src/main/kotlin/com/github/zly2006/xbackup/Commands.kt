@@ -755,25 +755,29 @@ object Commands {
         }
     }
 
-    private fun checkPermission(perm: String, defaultLevel: Int = 2): (CommandSourceStack) -> Boolean = { source ->
-        try {
-            // Call fabric-permissions API, but it might not be available
-            Permissions.check(source, perm, defaultLevel)
-        } catch (e: NoClassDefFoundError) {
-            // If the API is not available, just return true
+    private fun checkPermission(perm: String, defaultLevel: Int = 2): (CommandSourceStack) -> Boolean {
+        // fabric-permissions-api 0.7.0 provides require(String, int). Use it instead of
+        // check(source, ...): the old generic compile-time stub erased to
+        // check(Object, String, int), which does not exist at runtime.
+        val predicate: java.util.function.Predicate<CommandSourceStack> = try {
+            Permissions.require(perm, defaultLevel)
+        } catch (e: LinkageError) {
             //? if >=1.21.11 {
             /*val permission = when {
                 defaultLevel <= 0 -> null
-                defaultLevel <= 1 -> McPermissions.COMMANDS_MODERATOR
-                defaultLevel <= 2 -> McPermissions.COMMANDS_GAMEMASTER
-                defaultLevel <= 3 -> McPermissions.COMMANDS_ADMIN
-                else -> McPermissions.COMMANDS_OWNER
+                defaultLevel <= 1 -> net.minecraft.server.permissions.Permissions.COMMANDS_MODERATOR
+                defaultLevel <= 2 -> net.minecraft.server.permissions.Permissions.COMMANDS_GAMEMASTER
+                defaultLevel <= 3 -> net.minecraft.server.permissions.Permissions.COMMANDS_ADMIN
+                else -> net.minecraft.server.permissions.Permissions.COMMANDS_OWNER
             }
-            permission == null || source.permissions().hasPermission(permission)
+            java.util.function.Predicate { source ->
+                permission == null || source.permissions().hasPermission(permission)
+            }
             *///?} else {
-            source.hasPermission(defaultLevel)
+            java.util.function.Predicate { source -> source.hasPermission(defaultLevel) }
             //?}
         }
+        return { source -> predicate.test(source) }
     }
 }
 

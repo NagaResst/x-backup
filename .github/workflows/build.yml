@@ -64,6 +64,7 @@ jobs:
             versions/*/build/libs/*.jar
             !versions/*/build/libs/*-sources.jar
             !versions/*/build/libs/*-dev-all.jar
+            !versions/*/build/libs/*-raw.jar
           if-no-files-found: error
           compression-level: 9
       - name: capture build artifacts (cli)
