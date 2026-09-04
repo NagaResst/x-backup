@@ -1,7 +1,7 @@
 import java.util.jar.Attributes
 
 plugins {
-    id("io.github.goooler.shadow") version "8.1.7"
+    id("com.gradleup.shadow") version "9.6.1"
 }
 
 buildscript {

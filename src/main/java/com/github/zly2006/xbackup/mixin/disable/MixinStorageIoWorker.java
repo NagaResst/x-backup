@@ -1,9 +1,9 @@
 package com.github.zly2006.xbackup.mixin.disable;
 
-import net.minecraft.world.storage.StorageIoWorker;
+import net.minecraft.world.level.chunk.storage.IOWorker;
 import org.spongepowered.asm.mixin.*;
 
-@Mixin(StorageIoWorker.class)
+@Mixin(IOWorker.class)
 public abstract class MixinStorageIoWorker {
 
 }

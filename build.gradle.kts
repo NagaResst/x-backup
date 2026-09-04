@@ -1,9 +1,20 @@
+import org.vafer.jdeb.shaded.objectweb.asm.ClassReader
+import org.vafer.jdeb.shaded.objectweb.asm.ClassWriter
+import org.vafer.jdeb.shaded.objectweb.asm.commons.ClassRemapper
+import org.vafer.jdeb.shaded.objectweb.asm.commons.Remapper
+import java.nio.file.AtomicMoveNotSupportedException
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
+import java.util.zip.ZipEntry
+import java.util.zip.ZipInputStream
+import java.util.zip.ZipOutputStream
+
 plugins {
     `maven-publish`
-    id("fabric-loom")
+    id("dev.kikugie.loom-back-compat") version "0.4.2"
     kotlin("jvm")
     kotlin("plugin.serialization")
-    id("io.github.goooler.shadow") version "8.1.7"
+    id("com.gradleup.shadow")
     id("me.modmuss50.mod-publish-plugin")
 }
 
@@ -27,8 +38,16 @@ version = "${mod.version}+$mcVersion"
 group = mod.group
 base { archivesName.set(mod.id) }
 
+val isMojmapUnobfuscated = stonecutter.eval(mcVersion, ">=26")
+
 loom {
-    accessWidenerPath = rootProject.file("src/main/resources/xb.shared.accesswidener")
+    accessWidenerPath = rootProject.file(
+        if (isMojmapUnobfuscated) {
+            "src/main/resources/xb.shared.official.accesswidener"
+        } else {
+            "src/main/resources/xb.shared.accesswidener"
+        }
+    )
 }
 
 repositories {
@@ -36,11 +55,11 @@ repositories {
         forRepository { maven(url) { name = alias } }
         filter { groups.forEach(::includeGroup) }
     }
-    
+
     // Official repositories first for Fabric dependencies
     mavenCentral()
     maven("https://maven.fabricmc.net/")
-    
+
     // Chinese mirrors as fallback for common libraries
     maven("https://maven.aliyun.com/repository/central") {
         name = "Aliyun Central"
@@ -57,7 +76,7 @@ repositories {
             includeGroupByRegex("org\\.apache.*")
         }
     }
-    
+
     // Mod repositories
     strictMaven("https://www.cursemaven.com", "CurseForge", "curse.maven")
     strictMaven("https://api.modrinth.com/maven", "Modrinth", "maven.modrinth")
@@ -72,14 +91,21 @@ dependencies {
     testImplementation("org.jetbrains.kotlin:kotlin-test-junit:1.6.10")
 
     minecraft("com.mojang:minecraft:$mcVersion")
-    mappings("net.fabricmc:yarn:$mcVersion+build.${deps["yarn_build"]}:v2")
+    // On remapped versions (<= 1.21.11) this installs official Mojang mappings.
+    // On 26.1+ Minecraft is already unobfuscated, so it intentionally does nothing.
+    loomx.applyMojangMappings()
     modImplementation("net.fabricmc:fabric-loader:${deps["fabric_loader"]}")
     modImplementation("net.fabricmc:fabric-language-kotlin:${deps["kotlin_loader_version"]}")
     fapi(
         // Add modules from https://github.com/FabricMC/fabric
         "fabric-lifecycle-events-v1",
-        "fabric-resource-loader-v0"
     )
+
+    if (stonecutter.eval(mcVersion, ">=26")) {
+        fapi("fabric-resource-loader-v1")
+    } else {
+        fapi("fabric-resource-loader-v0")
+    }
 
     if (stonecutter.eval(stonecutter.current.version, ">=1.20")) {
         fapi("fabric-command-api-v2")
@@ -116,9 +142,11 @@ loom {
     }
 }
 
-val javaVersion =
-    if (stonecutter.eval(mcVersion, ">=1.20.6")) 21
-    else 17
+val javaVersion = when {
+    stonecutter.eval(mcVersion, ">=26") -> 25
+    stonecutter.eval(mcVersion, ">=1.20.6") -> 21
+    else -> 17
+}
 
 java {
     withSourcesJar()
@@ -130,20 +158,36 @@ kotlin {
     jvmToolchain(javaVersion)
 }
 
+val javaDep = if (javaVersion >= 25) ">=25" else ">=21"
+val mixinJavaLevel = "JAVA_$javaVersion"
+
 tasks.processResources {
     inputs.property("id", mod.id)
     inputs.property("name", mod.name)
     inputs.property("version", mod.version)
     inputs.property("mcdep", mcDep)
+    inputs.property("javaDep", javaDep)
+    inputs.property("mixinJavaLevel", mixinJavaLevel)
 
     val map = mapOf(
         "id" to mod.id,
         "name" to mod.name,
         "version" to mod.version,
-        "mcdep" to mcDep
+        "mcdep" to mcDep,
+        "javaDep" to javaDep,
+        "mixinJavaLevel" to mixinJavaLevel,
     )
 
     filesMatching("fabric.mod.json") { expand(map) }
+    filesMatching("x-backup.mixins.json") { expand(map) }
+
+    if (isMojmapUnobfuscated) {
+        // Fabric Loader still looks up the shared file name in the built jar.
+        exclude("xb.shared.accesswidener")
+        from(rootProject.file("src/main/resources/xb.shared.official.accesswidener")) {
+            rename { "xb.shared.accesswidener" }
+        }
+    }
 
     dependsOn(project(":common").tasks.processResources)
     outputs.upToDateWhen { false }
@@ -156,12 +200,23 @@ tasks.processResources {
     }
 }
 
-tasks.register<Copy>("buildAndCollect") {
-    group = "build"
-    from(tasks.remapJar.get().archiveFile)
-    into(rootProject.layout.buildDirectory.file("libs/${mod.version}"))
-    dependsOn("build")
+// buildAndCollect is defined below, after the final mod jar task is selected.
+
+tasks.matching {
+    it.name == "compileKotlin" || it.name == "compileJava"
+}.configureEach {
+    // Stonecutter preprocesses the shared sources into the versioned build
+    // directory. Keep the generation task in the graph for every compile.
+    dependsOn("stonecutterGenerate")
 }
+
+val shadowJarTask = tasks.shadowJar
+val shadowRelocations = listOf(
+    "org.jetbrains.exposed",
+    "org.apache",
+    "io.ktor"
+)
+val shadowRelocationPrefix = "com.github.zly2006.xbackup.libs."
 
 tasks {
     shadowJar {
@@ -192,25 +247,129 @@ tasks {
             exclude("org/sqlite/native/$it/**")
         }
 
-        val relocatePath = "com.github.zly2006.xbackup.libs."
-        listOf(
-            "org.jetbrains.exposed",
-            "org.apache",
-            "io.ktor"
-        ).forEach {
-            relocate(it, relocatePath + it)
+        shadowRelocations.forEach {
+            relocate(it, shadowRelocationPrefix + it)
         }
-    }
-
-    remapJar {
-        dependsOn(shadowJar)
-        inputFile.set(shadowJar.get().archiveFile)
     }
 }
 
+// 26.1+ uses the plain jar task, older versions use remapJar.
+loomx.modJar.configure {
+    dependsOn(shadowJarTask)
+    if (this is net.fabricmc.loom.task.RemapJarTask) {
+        inputFile.set(shadowJarTask.flatMap { it.archiveFile })
+    } else {
+        // 26.x: Minecraft is unobfuscated, so no remap is needed. The plain jar
+        // task must not produce the final artifact path any more: mixing its raw
+        // (unrelocated) project classes with the relocated shadow jar content was
+        // what caused NoClassDefFoundError: org/jetbrains/exposed/sql/Database.
+        archiveClassifier.set("raw")
+    }
+}
+
+// For 26.x, build the final jar from the shadow jar only. Mixing the plain jar
+// task's raw (unrelocated) project classes with the relocated shadow jar content
+// was what caused NoClassDefFoundError: org/jetbrains/exposed/sql/Database.
+// Shadow 9.6.1 can leave a few Kotlin inline-lambda classes pointing at the
+// original packages after its relocation pass. Copy the already-built shadow
+// jar unchanged, then repair only those remaining bytecode references.
+val finalModJar: TaskProvider<out org.gradle.jvm.tasks.Jar> = if (isMojmapUnobfuscated) {
+    tasks.register<org.gradle.api.tasks.bundling.Jar>("modJar26") {
+        group = "build"
+        dependsOn(shadowJarTask)
+        from(zipTree(shadowJarTask.flatMap { it.archiveFile }))
+        archiveClassifier.set("")
+        duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+
+        manifest {
+            from(loomx.modJar.get().manifest)
+            from(shadowJarTask.get().manifest)
+            attributes["Multi-Release"] = "true"
+            attributes["Fabric-Mapping-Namespace"] = "official"
+        }
+
+        doLast {
+            val jarPath = archiveFile.get().asFile.toPath()
+            val tempPath = Files.createTempFile(
+                jarPath.parent,
+                ".${jarPath.fileName}.",
+                ".relocated.tmp"
+            )
+            val relocatedPrefix = shadowRelocationPrefix.replace('.', '/')
+            val remapper = object : Remapper() {
+                override fun map(internalName: String): String {
+                    shadowRelocations.forEach { packageName ->
+                        val packagePath = packageName.replace('.', '/') + "/"
+                        if (internalName.startsWith(packagePath)) {
+                            return relocatedPrefix + internalName
+                        }
+                    }
+                    return internalName
+                }
+            }
+
+            try {
+                ZipInputStream(Files.newInputStream(jarPath)).use { input ->
+                    ZipOutputStream(Files.newOutputStream(tempPath)).use { output ->
+                        while (true) {
+                            val entry = input.nextEntry ?: break
+                            val inputBytes = input.readBytes()
+                            val outputBytes = if (!entry.isDirectory && entry.name.endsWith(".class")) {
+                                val reader = ClassReader(inputBytes)
+                                val writer = ClassWriter(0)
+                                reader.accept(ClassRemapper(writer, remapper), ClassReader.EXPAND_FRAMES)
+                                writer.toByteArray()
+                            } else {
+                                inputBytes
+                            }
+
+                            val outputEntry = ZipEntry(entry.name)
+                            if (entry.time >= 0) outputEntry.time = entry.time
+                            entry.comment?.let { outputEntry.comment = it }
+                            entry.extra?.let { outputEntry.extra = it }
+                            output.putNextEntry(outputEntry)
+                            if (!entry.isDirectory) output.write(outputBytes)
+                            output.closeEntry()
+                            input.closeEntry()
+                        }
+                    }
+                }
+
+                try {
+                    Files.move(
+                        tempPath,
+                        jarPath,
+                        StandardCopyOption.ATOMIC_MOVE,
+                        StandardCopyOption.REPLACE_EXISTING
+                    )
+                } catch (_: AtomicMoveNotSupportedException) {
+                    Files.move(tempPath, jarPath, StandardCopyOption.REPLACE_EXISTING)
+                }
+            } finally {
+                Files.deleteIfExists(tempPath)
+            }
+        }
+    }
+} else {
+    loomx.modJar
+}
+
+if (isMojmapUnobfuscated) {
+    tasks.named("assemble") {
+        dependsOn(finalModJar)
+    }
+}
+
+tasks.register<Copy>("buildAndCollect") {
+    group = "build"
+    from(finalModJar.flatMap { it.archiveFile })
+    into(rootProject.layout.buildDirectory.file("libs/${mod.version}"))
+    dependsOn(finalModJar)
+    dependsOn("build")
+}
 
 publishMods {
-    file = tasks.remapJar.get().archiveFile
+    file = finalModJar.flatMap { it.archiveFile }
     displayName = "${mod.name} ${mod.version} for $mcVersion"
     version = "${mod.version}+$mcVersion"
     changelog = rootProject.file("CHANGELOG.md").readText()

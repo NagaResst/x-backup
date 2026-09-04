@@ -1,13 +1,13 @@
 plugins {
     id("dev.kikugie.stonecutter")
-    id("fabric-loom") version "1.13.3" apply false
+    id("net.fabricmc.fabric-loom") version "1.17.19" apply false
+    id("net.fabricmc.fabric-loom-remap") version "1.17.19" apply false
 
-    kotlin("jvm") version "2.0.21" apply false
-    kotlin("plugin.serialization") version "2.0.0" apply false
-    id("io.github.goooler.shadow") version "8.1.7" apply false
-    base
-    id("me.modmuss50.mod-publish-plugin") version "0.8.4" apply false
-    id("org.ajoberstar.grgit") version "5.0.0-rc.3"
+    kotlin("jvm") version "2.4.0" apply false
+    kotlin("plugin.serialization") version "2.4.0" apply false
+    id("com.gradleup.shadow") version "9.6.1" apply false
+    id("me.modmuss50.mod-publish-plugin") version "2.2.0" apply false
+    id("org.ajoberstar.grgit") version "5.3.3"
 }
 stonecutter active "1.21.5" /* [SC] DO NOT EDIT */
 
@@ -29,9 +29,7 @@ subprojects {
         }
     }
 
-    base {
-        archivesName = property("mod.id") as String + "-" + name
-    }
+    the<BasePluginExtension>().archivesName.set(property("mod.id") as String + "-" + name)
 }
 
 
@@ -39,21 +37,21 @@ subprojects {
 tasks.register("buildAllVersions") {
     group = "build"
     description = "Build all Minecraft versions"
-    
-    // Get all version projects from stonecutter
+
     val versions = listOf(
         "1.21.1", "1.21.3", "1.21.4", "1.21.5",
-        "1.21.6", "1.21.9", "1.21.11"
+        "1.21.6", "1.21.9", "1.21.11",
+        "26.1.2", "26.2",
     )
-    
+
     versions.forEach { version ->
         dependsOn(":${version}:buildAndCollect")
     }
 }
 
 stonecutter parameters {
-    swap("mod_version", "\"${node.project.property("mod.version")}\"")
-    swap("git_commit", "\"${grgit.head().abbreviatedId}\"")
-    swap("commit_date", "\"${grgit.head().dateTime.toString().substringBefore("[")}\"")
-    const("poly_lib", node.project.property("deps.poly_lib").toString().isNotEmpty())
+    swaps["mod_version"] = "\"${project.property("mod.version")}\""
+    swaps["git_commit"] = "\"${grgit.head().abbreviatedId}\""
+    swaps["commit_date"] = "\"${grgit.head().dateTime.toString().substringBefore("[")}\""
+    constants["poly_lib"] = project.property("deps.poly_lib").toString().isNotEmpty()
 }

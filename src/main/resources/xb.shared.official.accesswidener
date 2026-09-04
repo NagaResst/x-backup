@@ -1,0 +1,6 @@
+accessWidener v1 official
+accessible field net/minecraft/server/MinecraftServer running Z
+accessible field net/minecraft/server/MinecraftServer stopped Z
+accessible method net/minecraft/server/MinecraftServer runServer ()V
+accessible field net/minecraft/network/Connection disconnectionHandled Z
+accessible field net/minecraft/client/gui/screens/worldselection/WorldSelectionList$WorldListEntry summary Lnet/minecraft/world/level/storage/LevelSummary;
